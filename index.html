@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>填色页 SEO 清洗工具 (本地离线版)</title>
+  
+  <!-- 样式库 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- 核心依赖 (React, ReactDOM, Babel, XLSX) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+    .animate-fade-in { animation: fadeIn 0.5s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5"
+  }
+}
+</script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useRef, useEffect } = React;
+
+    // --- 常量定义 ---
+    const BASE_WASTE_WORDS = [
+      "cute", "kawaii", "free", "character", "characters",
+      "printable coloring page", "printable coloring pages", "free coloring page", 
+      "free coloring pages", "coloring book page", "coloring sheet", 
+      "coloring sheets", "printable sheet", "printable pdf", "printable design", 
+      "art coloring page", "outline coloring page", "simple coloring page", 
+      "easy coloring page", "hard coloring page", "detailed coloring page", 
+      "black and white coloring page", "line art", "line drawing", "outline drawing", 
+      "template", "drawing template", "for kids", "for adults", "for teens", 
+      "for toddlers", "for girls", "for boys", "for beginners", "free download", 
+      "download printable", "PDF printable", "black and white", "grayscale", 
+      "simple colors", "colorable", "color-ready", "without colors", 
+      "pdf", "printable", "digital download", "instant download", 
+      "download pdf", "clipart", "svg", "8.5x11", "A4 size", "portrait", "landscape", 
+      "high resolution", "HD", "standing", "sitting", "smiling", "cute pose", 
+      "fun pose", "happy pose", "ready to color", "kawaii style", "aesthetic", 
+      "adorable", "simple line art", "clean outline", "sketch style", "doodle"
+    ];
+
+    const SYSTEM_INSTRUCTION = `你是一名精通SEO和关键词分析的专家，尤其擅长处理数字产品（如填色页）领域的关键词。你的任务是根据提供的基础废词库，利用你的专业知识进行扩充，识别并列出更多在填色页领域常见的、描述产品属性而非核心内容的废词。`;
+    
+    const AI_PROMPT_TEMPLATE = `
+      我需要你生成一份扩充的“废词”列表（JSON格式），用于过滤填色页相关的关键词。
+      以下是【基础废词库】（你不需要重复包含这些）：${BASE_WASTE_WORDS.join(", ")}
+      请在此基础上，识别并加入更多在填色页领域常见的废词，如文件格式(png, jpg)、动作(print, craft)、描述(drawing, pattern)、产品集合(bundle, pack)等。
+      输出要求：严格返回有效的JSON格式，结构如下：{ "expanded_waste_words": ["词汇1", "词汇2", ...] }
+    `;
+
+    // --- 图标组件 ---
+    const Icons = {
+      Shield: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+      Key: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>,
+      Upload: () => <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>,
+      ArrowRight: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
+      ArrowLeft: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
+      Download: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>,
+      Trash: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+      Check: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 11.08 22 2 7 21 12 3 12"/></svg>,
+      Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" x2="16.65" y1="21" y2="16.65"/></svg>,
+      Loader: () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>,
+      Plus: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+      X: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+      Tag: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
+      Sparkles: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+    };
+
+    // --- 工具函数 ---
+    const parseToMatrix = (text) => {
+      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      if (lines.length === 0) return [];
+      const hasTabs = lines.some(l => l.includes('\t'));
+      const separator = hasTabs ? '\t' : ',';
+      return lines.map(line => {
+        if (separator === '\t') {
+          return line.split('\t').map(cell => cell.trim().replace(/^"|"$/g, ''));
+        } else {
+          const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+          return matches ? matches.map(m => m.replace(/^"|"$/g, '').trim()) : line.split(',').map(s => s.trim());
+        }
+      });
+    };
+
+    const detectColumns = (matrix, seedKeyword) => {
+      if (matrix.length === 0) return { keywordIdx: 0, volumeIdx: 1 };
+      let keywordIdx = -1, volumeIdx = -1;
+      
+      if (seedKeyword && seedKeyword.trim().length > 0) {
+        const lowerSeed = seedKeyword.trim().toLowerCase();
+        const colScores = new Array(matrix[0].length).fill(0);
+        const checkLimit = Math.min(matrix.length, 50);
+        for (let r = 0; r < checkLimit; r++) {
+          for (let c = 0; c < matrix[r].length; c++) {
+            if (matrix[r][c]?.toLowerCase().includes(lowerSeed)) colScores[c]++;
+          }
+        }
+        let maxScore = -1;
+        colScores.forEach((score, idx) => { if (score > maxScore) { maxScore = score; keywordIdx = idx; } });
+      }
+
+      if (keywordIdx === -1) {
+        const headers = matrix[0].map(h => h.toLowerCase());
+        headers.forEach((h, idx) => { if (h.includes('keyword') || h.includes('term') || h.includes('相关词汇')) keywordIdx = idx; });
+      }
+      if (keywordIdx === -1) keywordIdx = 0;
+
+      const headers = matrix[0].map(h => h.toLowerCase());
+      headers.forEach((h, idx) => { if (h.includes('volume') || h.includes('traffic') || h.includes('流量')) volumeIdx = idx; });
+      
+      if (volumeIdx === -1) volumeIdx = matrix[0].length > 2 ? 2 : 1;
+      return { keywordIdx, volumeIdx };
+    };
+
+    const extractDataFromMatrix = (matrix, keywordIdx, volumeIdx) => {
+      const result = [];
+      let startRow = 0;
+      if (matrix.length > 0 && volumeIdx !== -1 && matrix[0][volumeIdx]) {
+         if (isNaN(parseFloat(matrix[0][volumeIdx].replace(/,/g, '')))) startRow = 1;
+      }
+      for (let i = startRow; i < matrix.length; i++) {
+        const row = matrix[i];
+        if (!row[keywordIdx]) continue;
+        const vVal = (volumeIdx !== -1 && row[volumeIdx]) ? row[volumeIdx] : '0';
+        result.push({ keyword: row[keywordIdx], volume: vVal });
+      }
+      return result;
+    };
+
+    const filterKeywords = (data, aiWasteWords, customWasteWords) => {
+      const allWasteWords = [...BASE_WASTE_WORDS, ...(customWasteWords||[]), ...aiWasteWords];
+      const wasteSet = allWasteWords.map(w => w.toLowerCase());
+      const clean = [];
+      let removed = 0;
+      for (const row of data) {
+        const kw = row.keyword.toLowerCase();
+        let isWaste = false;
+        for (const waste of wasteSet) {
+          if (kw.includes(waste)) { isWaste = true; break; }
+        }
+        isWaste ? removed++ : clean.push(row);
+      }
+      return { clean, removed };
+    };
+
+    // --- 组件 ---
+    const ApiKeyInput = ({ currentKey, onSave }) => {
+      const [val, setVal] = useState(currentKey);
+      return (
+        <div className="flex items-center gap-2">
+           <input type="password" value={val} onChange={e => setVal(e.target.value)} placeholder="API Key" className="px-3 py-1 border rounded text-xs w-32 md:w-48" />
+           <button onClick={() => onSave(val)} className="text-xs bg-indigo-600 text-white px-2 py-1 rounded">保存</button>
+        </div>
+      );
+    };
+
+    const FileUpload = ({ onDataLoaded }) => {
+      const processFile = (file) => {
+        if (file.name.match(/\.xlsx?$|\.xls$/)) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const workbook = XLSX.read(e.target.result, { type: 'array' });
+              const sheetName = workbook.SheetNames[0];
+              const tsv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName], { FS: "\t" });
+              onDataLoaded(tsv);
+            } catch (err) { alert("Excel 解析失败"); }
+          };
+          reader.readAsArrayBuffer(file);
+        } else {
+          const reader = new FileReader();
+          reader.onload = (e) => onDataLoaded(e.target.result);
+          reader.readAsText(file);
+        }
+      };
+      return (
+        <div className="border-2 border-dashed border-slate-300 p-10 rounded-xl bg-slate-50 hover:bg-white text-center cursor-pointer"
+             onPaste={(e) => { e.preventDefault(); onDataLoaded(e.clipboardData.getData('text')); }}
+             onClick={() => document.getElementById('fInput').click()}>
+          <div className="flex justify-center mb-4 text-indigo-600"><Icons.Upload/></div>
+          <h3 className="text-xl font-bold text-slate-800">点击上传或粘贴数据</h3>
+          <p className="text-slate-500 text-sm mt-2">支持 .xlsx, .csv, .txt</p>
+          <input id="fInput" type="file" className="hidden" accept=".csv,.xlsx,.txt" onChange={(e) => e.target.files[0] && processFile(e.target.files[0])} />
+        </div>
+      );
+    };
+
+    const ResultsView = ({ cleanData, aiWasteWords, customWasteWords, removedCount, onBack }) => {
+      const [page, setPage] = useState(1);
+      const PER_PAGE = 100;
+      const totalPages = Math.ceil(cleanData.length / PER_PAGE);
+      const currentData = cleanData.slice((page-1)*PER_PAGE, page*PER_PAGE);
+
+      const downloadExcel = () => {
+        const sheetData = cleanData.map(r => ({ "相关词汇": r.keyword, "流量": Number(r.volume.replace(/,/g,'')) || r.volume }));
+        const ws = XLSX.utils.json_to_sheet(sheetData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Cleaned");
+        XLSX.writeFile(wb, "cleaned_data.xlsx");
+      };
+
+      return (
+        <div className="w-full max-w-6xl mx-auto space-y-6">
+          <div className="flex items-center gap-4">
+            <button onClick={onBack} className="flex items-center gap-1 text-indigo-600 px-4 py-2 bg-indigo-50 rounded-lg"><Icons.ArrowLeft/> 返回</button>
+            <div className="flex gap-2 ml-auto">
+              <button onClick={downloadExcel} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg"><Icons.Download/> 导出 Excel</button>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+             <div className="bg-white p-6 rounded-xl border flex items-center gap-4">
+                <div className="p-3 bg-green-100 text-green-600 rounded-full"><Icons.Check/></div>
+                <div><p className="text-sm text-slate-500">保留关键词</p><p className="text-2xl font-bold">{cleanData.length}</p></div>
+             </div>
+             <div className="bg-white p-6 rounded-xl border flex items-center gap-4">
+                <div className="p-3 bg-red-100 text-red-600 rounded-full"><Icons.Trash/></div>
+                <div><p className="text-sm text-slate-500">已移除</p><p className="text-2xl font-bold">{removedCount}</p></div>
+             </div>
+          </div>
+
+          <div className="bg-white rounded-xl border overflow-hidden">
+             <div className="p-4 bg-slate-50 border-b font-semibold">最终数据列表</div>
+             <div className="max-h-[500px] overflow-auto">
+                <table className="w-full text-left text-sm">
+                   <thead className="bg-slate-100 sticky top-0"><tr><th className="p-3">#</th><th className="p-3">关键词</th><th className="p-3 text-right">流量</th></tr></thead>
+                   <tbody className="divide-y">
+                      {currentData.map((row, i) => (
+                         <tr key={i} className="hover:bg-slate-50">
+                            <td className="p-3 text-slate-400">{(page-1)*PER_PAGE + i + 1}</td>
+                            <td className="p-3 font-medium">{row.keyword}</td>
+                            <td className="p-3 text-right font-mono">{row.volume}</td>
+                         </tr>
+                      ))}
+                   </tbody>
+                </table>
+             </div>
+             <div className="p-4 border-t flex justify-between items-center bg-slate-50">
+                <span className="text-xs text-slate-500">第 {page} / {totalPages} 页</span>
+                <div className="flex gap-2">
+                   <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page===1} className="px-3 py-1 border rounded bg-white disabled:opacity-50">上一页</button>
+                   <button onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page===totalPages} className="px-3 py-1 border rounded bg-white disabled:opacity-50">下一页</button>
+                </div>
+             </div>
+          </div>
+        </div>
+      );
+    };
+
+    // --- 主应用 ---
+    const App = () => {
+      const [step, setStep] = useState(1); // 1:Upload, 2:Results
+      const [apiKey, setApiKey] = useState("");
+      const [rawMatrix, setRawMatrix] = useState([]);
+      const [kIdx, setKIdx] = useState(0);
+      const [vIdx, setVIdx] = useState(2);
+      const [result, setResult] = useState(null);
+      const [isProcessing, setIsProcessing] = useState(false);
+      const [seedKeyword, setSeed] = useState("");
+      const [useAI, setUseAI] = useState(true);
+      
+      const [customWasteWords, setCustomWasteWords] = useState([]);
+      const [newWasteWord, setNewWasteWord] = useState("");
+
+      useEffect(() => {
+        const saved = localStorage.getItem('custom_waste_words');
+        if(saved) try { setCustomWasteWords(JSON.parse(saved)); } catch(e){}
+      }, []);
+      useEffect(() => { localStorage.setItem('custom_waste_words', JSON.stringify(customWasteWords)); }, [customWasteWords]);
+
+      const processed = useMemo(() => extractDataFromMatrix(rawMatrix, kIdx, vIdx), [rawMatrix, kIdx, vIdx]);
+
+      const handleData = (txt) => {
+        const mat = parseToMatrix(txt);
+        if(!mat.length) return alert("无数据");
+        const def = detectColumns(mat, seedKeyword);
+        setRawMatrix(mat);
+        setKIdx(def.keywordIdx);
+        setVIdx(def.volumeIdx);
+      };
+
+      const addCustom = () => {
+        if(!newWasteWord.trim()) return;
+        const w = newWasteWord.trim().toLowerCase();
+        if(!customWasteWords.includes(w)) setCustomWasteWords([...customWasteWords, w]);
+        setNewWasteWord("");
+      };
+
+      const run = async () => {
+        setIsProcessing(true);
+        let aiWords = [];
+        if (useAI && apiKey) {
+           try {
+             const res = await fetch("https://api.apimart.ai/v1/chat/completions", {
+               method: "POST",
+               headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+               body: JSON.stringify({
+                 model: "gemini-3-pro-preview",
+                 messages: [{role:"system",content:SYSTEM_INSTRUCTION},{role:"user",content:AI_PROMPT_TEMPLATE}]
+               })
+             });
+             const data = await res.json();
+             const jsonStr = data.choices?.[0]?.message?.content?.replace(/^```json|```$/g, '').trim();
+             if(jsonStr) aiWords = JSON.parse(jsonStr).expanded_waste_words || [];
+           } catch(e) { console.warn("AI Fail", e); }
+        }
+        const { clean, removed } = filterKeywords(processed, aiWords, customWasteWords);
+        setResult({ cleanData: clean, removedCount: removed, aiWasteWords: aiWords, customWasteWords });
+        setStep(2);
+        setIsProcessing(false);
+      };
+
+      return (
+        <div className="max-w-6xl mx-auto px-4 py-8">
+          <header className="mb-8 flex items-center justify-between">
+             <div className="flex items-center gap-2">
+                <div className="bg-indigo-600 p-2 rounded text-white"><Icons.Shield/></div>
+                <h1 className="text-xl font-bold">SEO 清洗工具 <span className="text-xs bg-slate-200 px-2 py-1 rounded text-slate-600">v3.5</span></h1>
+             </div>
+             <ApiKeyInput currentKey={apiKey} onSave={setApiKey} />
+          </header>
+
+          {step === 1 && (
+            <div className="space-y-6 animate-fade-in">
+               <h2 className="text-2xl font-bold">导入数据</h2>
+               
+               {rawMatrix.length === 0 ? (
+                 <>
+                   <div className="bg-blue-50 p-4 rounded-lg text-blue-800 text-sm">
+                      <label>核心词辅助 (可选): </label>
+                      <input value={seedKeyword} onChange={e=>setSeed(e.target.value)} placeholder="如: hello kitty" className="ml-2 p-1 rounded border border-blue-200" />
+                   </div>
+                   <FileUpload onDataLoaded={handleData} />
+                 </>
+               ) : (
+                 <div className="bg-white p-6 rounded-xl border shadow-sm">
+                    <div className="mb-4 bg-slate-50 p-4 rounded grid grid-cols-2 gap-4">
+                       <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1">关键词列</label>
+                          <select value={kIdx} onChange={e=>setKIdx(+e.target.value)} className="w-full p-2 border rounded">
+                             {rawMatrix[0].map((_,i) => <option key={i} value={i}>列 {i+1}: {rawMatrix[0][i]?.substring(0,20)}</option>)}
+                          </select>
+                       </div>
+                       <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1">流量列</label>
+                          <select value={vIdx} onChange={e=>setVIdx(+e.target.value)} className="w-full p-2 border rounded">
+                             {rawMatrix[0].map((_,i) => <option key={i} value={i}>列 {i+1}: {rawMatrix[0][i]?.substring(0,20)}</option>)}
+                          </select>
+                       </div>
+                    </div>
+
+                    <div className="bg-yellow-50 border border-yellow-200 rounded p-4 mb-4">
+                        <div className="flex items-center gap-2 mb-2 text-yellow-800 text-sm font-bold"><Icons.Tag/> 自定义废词 (自动保存)</div>
+                        <div className="flex gap-2 mb-2">
+                            <input value={newWasteWord} onChange={e=>setNewWasteWord(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addCustom()} className="flex-1 px-2 py-1 border rounded text-sm" placeholder="输入废词回车..." />
+                            <button onClick={addCustom} className="bg-yellow-600 text-white px-3 py-1 rounded text-sm"><Icons.Plus/></button>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                            {customWasteWords.map((w,i) => (
+                                <span key={i} className="bg-white border text-xs px-2 py-1 rounded flex items-center gap-1">{w} <button onClick={()=>setCustomWasteWords(customWasteWords.filter(x=>x!==w))} className="text-red-500"><Icons.X/></button></span>
+                            ))}
+                        </div>
+                    </div>
+                    
+                    <div className="flex justify-between items-center mb-2">
+                       <h3 className="font-bold">预览 ({processed.length} 行)</h3>
+                       <button onClick={()=>setRawMatrix([])} className="text-sm text-red-500">清除重传</button>
+                    </div>
+                    <div className="max-h-60 overflow-auto border rounded mb-6">
+                       <table className="w-full text-sm text-left"><thead className="bg-slate-100 sticky top-0"><tr><th className="p-2">关键词</th><th className="p-2 text-right">流量</th></tr></thead><tbody>
+                          {processed.slice(0,20).map((r,i)=><tr key={i} className="border-t"><td className="p-2">{r.keyword}</td><td className="p-2 text-right">{r.volume}</td></tr>)}
+                       </tbody></table>
+                    </div>
+
+                    <div className="flex items-center gap-4 pt-4 border-t">
+                       <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input type="checkbox" checked={useAI} onChange={e=>setUseAI(e.target.checked)} className="w-4 h-4 text-indigo-600 rounded" />
+                          <span className="text-sm font-medium">启用 AI 智能识别</span>
+                       </label>
+                       <button onClick={run} disabled={isProcessing} className="ml-auto bg-indigo-600 text-white px-8 py-2 rounded-lg font-bold flex items-center gap-2">
+                          {isProcessing ? <Icons.Loader/> : <Icons.ArrowRight/>} 开始筛选
+                       </button>
+                    </div>
+                 </div>
+               )}
+            </div>
+          )}
+
+          {step === 2 && result && (
+             <ResultsView {...result} onBack={() => setStep(1)} />
+          )}
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
